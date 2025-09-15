@@ -83,7 +83,7 @@ enum opcode {
     OP_COPY,               // REG: 8, LITERAL_ID: 16 -> REG = LITERAL == ARRAY ? &LITERAL_COPY : LITERAL_COPY
 
     // Add the value of two integer registers and store them in the third.
-    OP_IADD,               // SUM_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_ADD,               // ADD_TYPE: 8, SUM_REG: 8, OP_REG0: 8, OP_REG1: 8
 
     // Push the contents of the given register into the stack.
     OP_LPUSH,              // SOURCE_REG: 8 
@@ -100,6 +100,20 @@ enum opcode {
                            // Otherwise, the - 1 rule is not applied since it is not necessary.
 
     OP_GOTO,               // GOTO_LOC: SIZE_T
+};
+
+// Used for some opcode arguments.
+enum value_type : uint8_t {
+    VAL_U8,
+    VAL_U16,
+    VAL_U32,
+    VAL_U64,
+    VAL_I8,
+    VAL_I16,
+    VAL_I32,
+    VAL_I64,
+    VAL_F32,
+    VAL_F64,
 };
 
 /*
@@ -181,6 +195,11 @@ static inline uint64_t _call_mergel_64(run_state& state) {
     return util::mergel_64(b0, b1, b2, b3, b4, b5, b6, b7);
 }
 
+template <typename T>
+static inline t_register_binary _binary_add(const t_register_binary operand0, const t_register_binary operand1) {
+    return util::bit_cast<T, t_register_binary>(util::bit_cast<t_register_binary, T>(operand0) + util::bit_cast<t_register_binary, T>(operand1));
+}
+
 // Takes in a fully initialized state and runs bytecode.
 void execute(run_state& state) {
     state.call_stack.emplace_back(call_stack_frame(0, 0));
@@ -196,12 +215,29 @@ void execute(run_state& state) {
                 break;
             }
 
-            case OP_IADD: {
+            case OP_ADD: {
+                const value_type type = static_cast<value_type>(state.next());
                 const t_register_id reg_target = state.next();
                 const t_register_binary& operand0 = top_frame.reg_copy_from(state.next());
                 const t_register_binary& operand1 = top_frame.reg_copy_from(state.next());
 
-                top_frame.reg_emplace_to(reg_target, operand0 + operand1);
+                uint64_t result;
+
+                switch (type) {
+                    case VAL_U8:  result = _binary_add<uint8_t>(operand0, operand1); break;
+                    case VAL_U16: result = _binary_add<uint16_t>(operand0, operand1); break;
+                    case VAL_U32: result = _binary_add<uint32_t>(operand0, operand1); break;
+                    case VAL_U64: result = _binary_add<uint64_t>(operand0, operand1); break;
+                    case VAL_I8:  result = _binary_add<int8_t>(operand0, operand1); break;
+                    case VAL_I16: result = _binary_add<int16_t>(operand0, operand1); break;
+                    case VAL_I32: result = _binary_add<int32_t>(operand0, operand1); break;
+                    case VAL_I64: result = _binary_add<int64_t>(operand0, operand1); break;
+                    case VAL_F32: result = _binary_add<float>(operand0, operand1); break;
+                    case VAL_F64: result = _binary_add<double>(operand0, operand1); break;
+                }
+
+                top_frame.reg_emplace_to(reg_target, result);
+
                 break;
             }
 
@@ -348,101 +384,37 @@ bool run(const std::string& path) {
 int main(int argc, char* argv[]) {
     std::string buffer;
 
-    // --- Constants ---
-    // Number of literals: 3
-    buffer += char(3);  /* 0 */
-    buffer += char(0);  /* 1 */
-
-    // Literal 0: u64 = 10
-    buffer += char(8);  /* 2 */
-    //
-    buffer += char(10);  /* 3 */
-    buffer += char(0);  /* 4 */
-    buffer += char(0);  /* 5 */
-    buffer += char(0);  /* 6 */
-    buffer += char(0);  /* 7 */
-    buffer += char(0);  /* 8 */
-    buffer += char(0);  /* 9 */
-    buffer += char(0); /* 10 */
-
-    // Literal 1: u64 = 20
-    buffer += char(8);  /* 11 */
-    //
-    buffer += char(20);  /* 12 */
-    buffer += char(0);  /* 13 */
-    buffer += char(0);  /* 14 */
-    buffer += char(0);  /* 15 */
-    buffer += char(0);  /* 16 */
-    buffer += char(0);  /* 17 */
-    buffer += char(0);  /* 18 */
-    buffer += char(0); /* 19 */
-
-    // Literal 2: u64 = 5
-    buffer += char(8);  /* 20 */
-    //
-    buffer += char(5);  /* 21 */
-    buffer += char(0);  /* 22 */
-    buffer += char(0);  /* 23 */
-    buffer += char(0);  /* 24 */
-    buffer += char(0);  /* 25 */
-    buffer += char(0);  /* 26 */
-    buffer += char(0);  /* 27 */
-    buffer += char(0);  /* 28 */
-
-    // --- Bytecode ---
+    buffer += char(2);
+    buffer += char(0);
     
-    // CALL FUNCTION
-    buffer += char(OP_CALL); /* 29 */
-    buffer += char(41);       /* 30 */
-    buffer += char(0);       /* 31 */
-    buffer += char(0);       /* 32 */
-    buffer += char(0);      /* 33 */
-    //
-    buffer += char(2);       /* 34 */
-    buffer += char(0);       /* 35 */
+    buffer += char(4);  // 4 bytes
+    buffer += char(24); // value 24
+    buffer += char(0);
+    buffer += char(0);
+    buffer += char(0); // sign
 
-    // GO TO END OF PROGRAM
-    buffer += char(OP_GOTO); /* 36 */
-    buffer += char(60);       /* 37 */
-    buffer += char(0);       /* 38 */
-    buffer += char(0);       /* 39 */
-    buffer += char(0);      /* 40 */
+    buffer += char(4);  // 4 bytes
+    buffer += char(12); // value 12 but its signed so whatevs
+    buffer += char(0);
+    buffer += char(0);
+    buffer += char(0); // sign
 
-    // FUNCTION
-    // Load literal 0 -> reg0
-    buffer += char(OP_COPY); /* 41 */
-    buffer += char(0);       /* 42 */
-    buffer += char(0);       /* 43 */
+    // Entry point
+    buffer += char(OP_COPY); // load 24
+    buffer += char(0);
+    buffer += char(0);
 
-    // Load literal 1 -> reg1
-    buffer += char(OP_COPY); /* 44 */
-    buffer += char(1);       /* 45 */
-    buffer += char(1);       /* 46 */
+    buffer += char(OP_COPY); // load other literal
+    buffer += char(1);
+    buffer += char(1);
 
-    // Add reg0 + reg1 -> reg2
-    buffer += char(OP_IADD); /* 47 */
-    buffer += char(2);       /* 48 */
-    buffer += char(0);       /* 49 */
-    buffer += char(1);       /* 50 */
+    buffer += char(OP_ADD);
+    buffer += char(VAL_U32);
+    buffer += char(2);
+    buffer += char(0);
+    buffer += char(1);
 
-    // Load literal 2 -> reg3
-    buffer += char(OP_COPY); /* 51 */
-    buffer += char(3);       /* 52 */
-    buffer += char(2);       /* 53 */
-
-    // Add reg2 + reg3 -> reg4
-    buffer += char(OP_IADD); /* 54 */
-    buffer += char(4);       /* 55 */
-    buffer += char(2);       /* 56 */
-    buffer += char(3);       /* 57 */
-
-    // RETURN reg4
-    buffer += char(OP_RETURN); /* 58 */
-    buffer += char(4);         /* 59 */
-
-    // EOF
-    buffer += char(OP_EOF);    /* 60 */
-
+    buffer += char(0); // EOF
 
     std::ofstream write_file("test.lch", std::ios::binary); // .lican-chunk
     write_file.write(buffer.c_str(), buffer.length());

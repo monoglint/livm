@@ -26,8 +26,8 @@ namespace util {
            (static_cast<uint64_t>(b7) << 56);
     }
 
-    template <typename CAST_TO, typename BINARY>
-    inline CAST_TO cast_binary(BINARY binary) {
+    template <typename FROM, typename CAST_TO>
+    inline CAST_TO bit_cast(FROM binary) {
         CAST_TO value;
         memcpy(&value, &binary, sizeof(value));
         return value;
