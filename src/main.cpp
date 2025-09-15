@@ -11,6 +11,9 @@
 
 #include "util.hpp"
 
+#define CHRONO_MODE 0
+#define PRINT_ENTRY_POINT_REGISTERS 1
+
 /*
 
 CHUNK
@@ -77,7 +80,7 @@ using t_call_stack_frame_id = uint16_t;
 enum opcode {
                            // ARGS -> SIDE EFFECST
 
-    OP_EOF,
+    OP_EOF, // Must be index 0
 
     // Load a constant into a register.
     OP_COPY,               // REG: 8, LITERAL_ID: 16 -> REG = LITERAL == ARRAY ? &LITERAL_COPY : LITERAL_COPY
@@ -170,7 +173,7 @@ static inline uint16_t _call_mergel_16(run_state& state) {
     uint8_t b0 = state.next();
     uint8_t b1 = state.next();
  
-    return util::mergel_16(b0, b1);
+    return bit_util::mergel_16(b0, b1);
 }
 
 static inline uint32_t _call_mergel_32(run_state& state) {
@@ -179,7 +182,7 @@ static inline uint32_t _call_mergel_32(run_state& state) {
     uint8_t b2 = state.next();
     uint8_t b3 = state.next();
 
-    return util::mergel_32(b0, b1, b2, b3);
+    return bit_util::mergel_32(b0, b1, b2, b3);
 }
 
 static inline uint64_t _call_mergel_64(run_state& state) {
@@ -192,111 +195,135 @@ static inline uint64_t _call_mergel_64(run_state& state) {
     uint8_t b6 = state.next();
     uint8_t b7 = state.next();
 
-    return util::mergel_64(b0, b1, b2, b3, b4, b5, b6, b7);
+    return bit_util::mergel_64(b0, b1, b2, b3, b4, b5, b6, b7);
 }
 
 template <typename T>
 static inline t_register_binary _binary_add(const t_register_binary operand0, const t_register_binary operand1) {
-    return util::bit_cast<T, t_register_binary>(util::bit_cast<t_register_binary, T>(operand0) + util::bit_cast<t_register_binary, T>(operand1));
+    return bit_util::bit_cast<T, t_register_binary>(bit_util::bit_cast<t_register_binary, T>(operand0) + bit_util::bit_cast<t_register_binary, T>(operand1));
 }
 
 // Takes in a fully initialized state and runs bytecode.
 void execute(run_state& state) {
     state.call_stack.emplace_back(call_stack_frame(0, 0));
 
-    while (!state.at_eof()) {
-        uint8_t instruction = state.next();
-        call_stack_frame& top_frame = state.call_stack.back();
+    auto start = std::chrono::high_resolution_clock::now();
+    t_chunk_pos ip_marker = state.ip;
 
-        switch (instruction) {
-            case OP_COPY: {
-                const t_register_id reg_target = state.next();
-                top_frame.reg_copy_to(reg_target, state.lit_copy_from(state.next()));
-                break;
-            }
+#if CHRONO_MODE
+    for (int _ = 0; _ < 50; _++) {
+        state.ip = ip_marker;
+#endif
+        while (!state.at_eof()) {
+            uint8_t instruction = state.next();
+            call_stack_frame& top_frame = state.call_stack.back();
 
-            case OP_ADD: {
-                const value_type type = static_cast<value_type>(state.next());
-                const t_register_id reg_target = state.next();
-                const t_register_binary& operand0 = top_frame.reg_copy_from(state.next());
-                const t_register_binary& operand1 = top_frame.reg_copy_from(state.next());
+            switch (instruction) {
+                case OP_EOF:
+                    break;
 
-                uint64_t result;
+                case OP_COPY: {
+                    const t_register_id reg_target = state.next();
+                    const t_literal_id literal_id = _call_mergel_16(state);
 
-                switch (type) {
-                    case VAL_U8:  result = _binary_add<uint8_t>(operand0, operand1); break;
-                    case VAL_U16: result = _binary_add<uint16_t>(operand0, operand1); break;
-                    case VAL_U32: result = _binary_add<uint32_t>(operand0, operand1); break;
-                    case VAL_U64: result = _binary_add<uint64_t>(operand0, operand1); break;
-                    case VAL_I8:  result = _binary_add<int8_t>(operand0, operand1); break;
-                    case VAL_I16: result = _binary_add<int16_t>(operand0, operand1); break;
-                    case VAL_I32: result = _binary_add<int32_t>(operand0, operand1); break;
-                    case VAL_I64: result = _binary_add<int64_t>(operand0, operand1); break;
-                    case VAL_F32: result = _binary_add<float>(operand0, operand1); break;
-                    case VAL_F64: result = _binary_add<double>(operand0, operand1); break;
+                    top_frame.reg_copy_to(reg_target, state.lit_copy_from(literal_id));
+                    break;
                 }
 
-                top_frame.reg_emplace_to(reg_target, result);
+                case OP_ADD: {
+                    const value_type type = static_cast<value_type>(state.next());
+                    const t_register_id reg_target = state.next();
+                    const t_register_binary& operand0 = top_frame.reg_copy_from(state.next());
+                    const t_register_binary& operand1 = top_frame.reg_copy_from(state.next());
 
-                break;
-            }
+                    uint64_t result;
 
-            case OP_LPUSH:
-                top_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
-                break;
-            
-            case OP_LCOPY: {
-                const t_register_binary& target = state.next();
-                top_frame.reg_copy_to(target, top_frame.local_stack[state.next()]);
-                break;
-            }   
+                    switch (type) {
+                        case VAL_U8:  result = _binary_add<uint8_t>(operand0, operand1); break;
+                        case VAL_U16: result = _binary_add<uint16_t>(operand0, operand1); break;
+                        case VAL_U32: result = _binary_add<uint32_t>(operand0, operand1); break;
+                        case VAL_U64: result = _binary_add<uint64_t>(operand0, operand1); break;
+                        case VAL_I8:  result = _binary_add<int8_t>(operand0, operand1); break;
+                        case VAL_I16: result = _binary_add<int16_t>(operand0, operand1); break;
+                        case VAL_I32: result = _binary_add<int32_t>(operand0, operand1); break;
+                        case VAL_I64: result = _binary_add<int64_t>(operand0, operand1); break;
+                        case VAL_F32: result = _binary_add<float>(operand0, operand1); break;
+                        case VAL_F64: result = _binary_add<double>(operand0, operand1); break;
+                    }
 
-            case OP_CALL: {
-                const t_chunk_pos goto_position = _call_mergel_32(state);
-                const t_register_id return_value_register = state.next();
-                const uint8_t argument_count = state.next();
+                    top_frame.reg_emplace_to(reg_target, result);
 
-                call_stack_frame new_stack_frame(state.ip + argument_count, return_value_register);
-
-                for (int i = 0; i < argument_count; i++) {
-                    new_stack_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
+                    break;
                 }
 
-                state.call_stack.emplace_back(new_stack_frame);
-
-                state.ip = goto_position;
-
-                break;
-            }
-
-            case OP_RETURN: {
-                // Write return value.
-                if (top_frame.return_value_register > 0) {
-                    state.call_stack[state.call_stack.size() - 2].reg_emplace_to(top_frame.return_value_register - 1, top_frame.reg_copy_from(state.next()));
-                }  
-
-                state.ip = top_frame.return_address;
-                state.call_stack.pop_back();
+                case OP_LPUSH:
+                    top_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
+                    break;
                 
-                break;
+                case OP_LCOPY: {
+                    const t_register_binary& target = state.next();
+                    top_frame.reg_copy_to(target, top_frame.local_stack[state.next()]);
+                    break;
+                }   
+
+                case OP_CALL: {
+                    const t_chunk_pos goto_position = _call_mergel_32(state);
+                    const t_register_id return_value_register = state.next();
+                    const uint8_t argument_count = state.next();
+
+                    call_stack_frame new_stack_frame(state.ip + argument_count, return_value_register);
+
+                    for (int i = 0; i < argument_count; i++) {
+                        new_stack_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
+                    }
+
+                    state.call_stack.emplace_back(new_stack_frame);
+
+                    state.ip = goto_position;
+
+                    break;
+                }
+
+                case OP_RETURN: {
+                    // Write return value.
+                    if (top_frame.return_value_register > 0) {
+                        state.call_stack[state.call_stack.size() - 2].reg_emplace_to(top_frame.return_value_register - 1, top_frame.reg_copy_from(state.next()));
+                    }  
+
+                    state.ip = top_frame.return_address;
+                    state.call_stack.pop_back();
+                    
+                    break;
+                }
+
+                case OP_GOTO:
+                    state.ip = _call_mergel_64(state);
+                    break;
+
+                default:
+                    throw std::runtime_error("Responded to invalid opcode: " + std::to_string(instruction));
             }
-
-            case OP_GOTO:
-                state.ip = _call_mergel_64(state);
-                break;
-
-            default:
-                throw std::runtime_error("Responded to invalid opcode: " + std::to_string(instruction));
         }
+
+#if CHRONO_MODE
     }
 
-    std::cout << "Execution complete. Changed Registers in top stack frame:\n";
+    auto end = std::chrono::high_resolution_clock::now();
+    auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    std::cout << "Execution time (avg): " << diff.count() / 50 << "ns\n";
+#endif
+
+    std::cout << "Execution complete.\n";
+
+#if PRINT_ENTRY_POINT_REGISTERS
+    std::cout << "Modified registers in entry-point stack frame:\n";
     for (int id = 0; id < state.call_stack.back().register_list.size(); id++) {
-        const std::string bitset = std::bitset<64>(state.call_stack.back().reg_copy_from(id)).to_string();
-
-        if (bitset.find('1') != std::string::npos)
-            std::cout << std::to_string(id) << ":\t" << bitset << '\n';
+        const t_register_binary register_value = state.call_stack.back().reg_copy_from(id);
+        
+        if (register_value != 0)
+            std::cout << std::to_string(id) << ":\t" << std::bitset<64>(state.call_stack.back().reg_copy_from(id)) << '\n';
     }
+#endif
 }
 
 // Assumes the chunk is already initialized. Parses the first few instructions and initializes the constant table.
@@ -323,6 +350,7 @@ bool load_constants(run_state& state) {
                 break;
             default:
                 binary = 0;
+                break;
         }
 
         state.literal_list.emplace_back(binary);
@@ -382,42 +410,52 @@ bool run(const std::string& path) {
 }
 
 int main(int argc, char* argv[]) {
-    std::string buffer;
+    std::string b;
 
-    buffer += char(2);
-    buffer += char(0);
-    
-    buffer += char(4);  // 4 bytes
-    buffer += char(24); // value 24
-    buffer += char(0);
-    buffer += char(0);
-    buffer += char(0); // sign
+    using namespace str_util;
 
-    buffer += char(4);  // 4 bytes
-    buffer += char(12); // value 12 but its signed so whatevs
-    buffer += char(0);
-    buffer += char(0);
-    buffer += char(0); // sign
+    // Literal count
+    write_16(b, 3);
 
-    // Entry point
-    buffer += char(OP_COPY); // load 24
-    buffer += char(0);
-    buffer += char(0);
+    write_8(b, 4);
+    write_32(b, bit_util::bit_cast<float, uint32_t>(float(-52)));
 
-    buffer += char(OP_COPY); // load other literal
-    buffer += char(1);
-    buffer += char(1);
+    write_8(b, 4);
+    write_32(b, bit_util::bit_cast<float, uint32_t>(float(24)));
 
-    buffer += char(OP_ADD);
-    buffer += char(VAL_U32);
-    buffer += char(2);
-    buffer += char(0);
-    buffer += char(1);
+    write_8(b, 4);
+    write_32(b, bit_util::bit_cast<float, uint32_t>(float(63)));
 
-    buffer += char(0); // EOF
+    // Main
+    write_8(b, OP_COPY);
+    write_8(b, 0);
+    write_16(b, 0);
+
+    write_8(b, OP_COPY);
+    write_8(b, 1);
+    write_16(b, 1);
+
+    write_8(b, OP_ADD);
+    write_8(b, VAL_F32);
+    write_8(b, 2);
+    write_8(b, 0);
+    write_8(b, 1);
+
+    write_8(b, OP_COPY);
+    write_8(b, 3);
+    write_16(b, 2);
+
+    write_8(b, OP_ADD);
+    write_8(b, VAL_F32);
+    write_8(b, 4);
+    write_8(b, 2);
+    write_8(b, 3);
+
+    // Eof
+    write_8(b, OP_EOF);
 
     std::ofstream write_file("test.lch", std::ios::binary); // .lican-chunk
-    write_file.write(buffer.c_str(), buffer.length());
+    write_file.write(b.c_str(), b.length());
     write_file.close();
 
     return !run("test.lch");

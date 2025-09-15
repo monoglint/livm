@@ -2,8 +2,9 @@
 
 #include <cstdint>
 #include <utility>
+#include <string>
 
-namespace util {
+namespace bit_util {
     inline uint16_t mergel_16(uint8_t b0, uint8_t b1) {
         return (static_cast<uint16_t>(b1) << 8) | b0;
     }
@@ -26,10 +27,68 @@ namespace util {
            (static_cast<uint64_t>(b7) << 56);
     }
 
+    inline void splitl_16(const uint16_t value, uint8_t& b0, uint8_t& b1) {
+        b0 = value & 0xFF;
+        b1 = (value >> 8) & 0xFF;
+    }
+
+    inline void splitl_32(const uint32_t value, uint8_t& b0, uint8_t& b1, uint8_t& b2, uint8_t& b3) {
+        b0 = value & 0xFF;
+        b1 = (value >> 8) & 0xFF;
+        b2 = (value >> 16) & 0xFF;
+        b3 = (value >> 24) & 0xFF;
+    }
+
+    inline void splitl_64(const uint64_t value, uint8_t& b0, uint8_t& b1, uint8_t& b2, uint8_t& b3, uint8_t& b4, uint8_t& b5, uint8_t& b6, uint8_t& b7) {
+        b0 = value & 0xFF;
+        b1 = (value >> 8) & 0xFF;
+        b2 = (value >> 16) & 0xFF;
+        b3 = (value >> 24) & 0xFF;
+        b4 = (value >> 32) & 0xFF;
+        b5 = (value >> 40) & 0xFF;
+        b6 = (value >> 48) & 0xFF;
+        b7 = (value >> 56) & 0xFF;
+    }
+
     template <typename FROM, typename CAST_TO>
-    inline CAST_TO bit_cast(FROM binary) {
-        CAST_TO value;
-        memcpy(&value, &binary, sizeof(value));
-        return value;
+    inline CAST_TO bit_cast(FROM from) {
+        CAST_TO to;
+        memcpy(&to, &from, std::min(sizeof(from), sizeof(to)));
+        return to;
+    }
+}
+
+namespace str_util {
+    static inline void write_8(std::string& buffer, const uint8_t data) {
+        buffer += data;
+    }
+
+    static inline void write_16(std::string& buffer, const uint16_t data) {
+        uint8_t b0, b1;
+        bit_util::splitl_16(data, b0, b1);
+        buffer += b0;
+        buffer += b1;
+    }
+
+    static inline void write_32(std::string& buffer, const uint32_t data) {
+        uint8_t b0, b1, b2, b3;
+        bit_util::splitl_32(data, b0, b1, b2, b3);
+        buffer += b0;
+        buffer += b1;
+        buffer += b2;
+        buffer += b3;
+    }
+
+    static inline void write_64(std::string& buffer, const uint64_t data) {
+        uint8_t b0, b1, b2, b3, b4, b5, b6, b7;
+        bit_util::splitl_64(data, b0, b1, b2, b3, b4, b5, b6, b7);
+        buffer += b0;
+        buffer += b1;
+        buffer += b2;
+        buffer += b3;
+        buffer += b4;
+        buffer += b5;
+        buffer += b6;
+        buffer += b7;
     }
 }
