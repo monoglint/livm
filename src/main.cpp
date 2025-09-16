@@ -12,7 +12,7 @@
 #include "util.hpp"
 
 #define CHRONO_MODE 0
-#define PRINT_ENTRY_POINT_REGISTERS 1
+constexpr uint64_t CHRONO_REPEAT = 100000000;
 
 /*
 
@@ -33,12 +33,21 @@ constexpr auto LOCAL_STACK_MAX = UINT8_MAX;
 constexpr auto REGISTER_COUNT = UINT8_MAX;
 constexpr auto LOCAL_LIST_MAX = UINT8_MAX;
 
+/*
+
+===WARNING===
+THESE ARE NOT SOFTCODED
+
+CHANGING A TYPE BELOW CAN MESS UP THE PROGRAM.
+
+*/
+
 // A chunk is a segment of bytecode. In this case it is what the ip will be swimming through.
 using t_chunk = std::vector<uint8_t>;
 using t_chunk_pos = uint32_t;
 
-using t_register_binary = uint64_t; // How many bytes a register takes up.
-using t_register_list = std::array<t_register_binary, REGISTER_COUNT + 1>;
+using t_register_value = uint64_t; // How many bytes a register takes up.
+using t_register_list = std::array<t_register_value, REGISTER_COUNT + 1>;
 using t_register_id = uint8_t;
 
 // Note: This is not a literal type!! This is just the index of the literal in the constant pool/literal list.
@@ -49,6 +58,7 @@ using t_local_id = uint16_t;
 struct call_stack_frame {
     call_stack_frame(const t_chunk_pos return_address, const t_chunk_pos return_value_register)
         : return_address(return_address), return_value_register(return_value_register) {
+        local_stack.reserve(16); // A good amount of local variables we can assume the average function might have.
         for (int i = 0; i <= REGISTER_COUNT; i++) {
             register_list[i] = 0;
         }
@@ -56,20 +66,20 @@ struct call_stack_frame {
 
     t_register_list register_list;
 
-    std::vector<t_register_binary> local_stack;
+    std::vector<t_register_value> local_stack;
     
     const t_chunk_pos return_address;
     const t_register_id return_value_register;
 
-    inline void reg_copy_to(const t_register_id reg, const t_register_binary& binary) {
+    inline void reg_copy_to(const t_register_id reg, const t_register_value& binary) {
         register_list[reg] = binary;
     }
 
-    inline const t_register_binary reg_copy_from(const t_register_id reg) const {
+    inline const t_register_value reg_copy_from(const t_register_id reg) const {
         return register_list[reg];
     }
 
-    inline void reg_emplace_to(const t_register_id reg, const t_register_binary new_value) {
+    inline void reg_emplace_to(const t_register_id reg, const t_register_value new_value) {
         register_list[reg] = new_value;
     }
 };
@@ -78,31 +88,36 @@ using t_call_stack = std::array<call_stack_frame, CALL_STACK_MAX + 1>;
 using t_call_stack_frame_id = uint16_t;
 
 enum opcode {
+                           // Assume args are unsigned unless explicitly said otherwise.
                            // ARGS -> SIDE EFFECST
 
     OP_EOF, // Must be index 0
+
+    OP_OUT,                // VALUE_TYPE: 8, SOURCE_REG: 8
 
     // Load a constant into a register.
     OP_COPY,               // REG: 8, LITERAL_ID: 16 -> REG = LITERAL == ARRAY ? &LITERAL_COPY : LITERAL_COPY
 
     // Add the value of two integer registers and store them in the third.
-    OP_ADD,               // ADD_TYPE: 8, SUM_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_ADD,                // ADD_TYPE: 8, SUM_REG: 8, OP_REG0: 8, OP_REG1: 8
 
     // Push the contents of the given register into the stack.
-    OP_LPUSH,              // SOURCE_REG: 8 
+    OP_LOC_PUSH,           // SOURCE_REG: 8 
 
     // Copy a value from the local stack.
-    OP_LCOPY,              // REG: 8, LOCAL_INDEX: T_LOCAL_ID_MAX
+    OP_LOC_COPY,           // REG: 8, LOCAL_INDEX: T_LOCAL_ID_MAX
 
     // Push a new value to the stack frame.
-    OP_CALL,               // GOTO_LOC: SIZE_T, REG_RETURN_LOC: 8, ARG_COUNT: 8, REG_ARG: 8...
+    // Note: IP_OFFSET is based on the instruction location, not the ending arg byte of the instruction.
+    OP_CALL,               // IP_OFFSET: i32, REG_RETURN_LOC: 8, ARG_COUNT: 8, REG_ARG: 8...?
                            // If REG_RETURN_LOC is 0, then no return value. Otherwise, the return reg is REG_RETURN_LOC - 1
 
     OP_RETURN,             // REG_RETURN_VAL: 8
                            // If caller expects no return value, this should just default to zero.
                            // Otherwise, the - 1 rule is not applied since it is not necessary.
 
-    OP_GOTO,               // GOTO_LOC: SIZE_T
+    OP_JUMP_I8,            // IP_OFFSET: i8
+    OP_JUMP_I16,           // IP_OFFSET: i16
 };
 
 // Used for some opcode arguments.
@@ -119,32 +134,13 @@ enum value_type : uint8_t {
     VAL_F64,
 };
 
-/*
-Making a local variable
-OP_COPY 0 0
-OP_LPUSH 0
-
-Making a local variable that is a table.
-
-literals: [5i, 3i, 6i, -4i]
-OP_COPY 0 0
-OP_LPUSH 0
-OP_COPY 0 1
-OP_LPUSH 0
-OP_COPY 0 2
-OP_LPUSH 0
-OP_COPY 0 3
-OP_LPUSH 0
-
-*/
-
 struct run_state {
     t_chunk chunk;
 
-    std::vector<t_register_binary> literal_list;
+    std::vector<t_register_value> literal_list;
     std::vector<call_stack_frame> call_stack;
 
-    inline t_register_binary lit_copy_from(const t_literal_id literal) const {
+    inline t_register_value lit_copy_from(const t_literal_id literal) const {
         return literal_list[literal];
     }
 
@@ -199,28 +195,50 @@ static inline uint64_t _call_mergel_64(run_state& state) {
 }
 
 template <typename T>
-static inline t_register_binary _binary_add(const t_register_binary operand0, const t_register_binary operand1) {
-    return bit_util::bit_cast<T, t_register_binary>(bit_util::bit_cast<t_register_binary, T>(operand0) + bit_util::bit_cast<t_register_binary, T>(operand1));
+static inline t_register_value _binary_add(const t_register_value operand0, const t_register_value operand1) {
+    return bit_util::bit_cast<T, t_register_value>(bit_util::bit_cast<t_register_value, T>(operand0) + bit_util::bit_cast<t_register_value, T>(operand1));
 }
 
 // Takes in a fully initialized state and runs bytecode.
 void execute(run_state& state) {
     state.call_stack.emplace_back(call_stack_frame(0, 0));
 
+#if CHRONO_MODE
     auto start = std::chrono::high_resolution_clock::now();
     t_chunk_pos ip_marker = state.ip;
-
-#if CHRONO_MODE
-    for (int _ = 0; _ < 50; _++) {
+    for (int _ = 0; _ < CHRONO_REPEAT; _++) {
         state.ip = ip_marker;
 #endif
-        while (!state.at_eof()) {
+        while (!state.at_eof() && state.call_stack.size() > 0) {
             uint8_t instruction = state.next();
             call_stack_frame& top_frame = state.call_stack.back();
 
             switch (instruction) {
                 case OP_EOF:
                     break;
+
+                case OP_OUT: {
+                    const value_type type = static_cast<value_type>(state.next());
+                    const t_register_value reg_target_data = top_frame.reg_copy_from(state.next());
+                    std::string buffer;
+
+                    switch (type) {
+                        case VAL_U8:  buffer = std::to_string(bit_util::bit_cast<t_register_value, uint8_t>(reg_target_data)); break;
+                        case VAL_U16: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint16_t>(reg_target_data)); break;
+                        case VAL_U32: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint32_t>(reg_target_data)); break;
+                        case VAL_U64: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint64_t>(reg_target_data)); break;
+                        case VAL_I8:  buffer = std::to_string(bit_util::bit_cast<t_register_value, uint8_t>(reg_target_data)); break;
+                        case VAL_I16: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint16_t>(reg_target_data)); break;
+                        case VAL_I32: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint32_t>(reg_target_data)); break;
+                        case VAL_I64: buffer = std::to_string(bit_util::bit_cast<t_register_value, uint64_t>(reg_target_data)); break;
+                        case VAL_F32: buffer = std::to_string(bit_util::bit_cast<t_register_value, float>(reg_target_data)); break;
+                        case VAL_F64: buffer = std::to_string(bit_util::bit_cast<t_register_value, double>(reg_target_data)); break;
+                    }
+                    
+                    std::cout << "RUNTIME VALUE: " << buffer << '\n';
+
+                    break;                    
+                }
 
                 case OP_COPY: {
                     const t_register_id reg_target = state.next();
@@ -233,8 +251,8 @@ void execute(run_state& state) {
                 case OP_ADD: {
                     const value_type type = static_cast<value_type>(state.next());
                     const t_register_id reg_target = state.next();
-                    const t_register_binary& operand0 = top_frame.reg_copy_from(state.next());
-                    const t_register_binary& operand1 = top_frame.reg_copy_from(state.next());
+                    const t_register_value& operand0 = top_frame.reg_copy_from(state.next());
+                    const t_register_value& operand1 = top_frame.reg_copy_from(state.next());
 
                     uint64_t result;
 
@@ -256,18 +274,19 @@ void execute(run_state& state) {
                     break;
                 }
 
-                case OP_LPUSH:
+                case OP_LOC_PUSH:
                     top_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
                     break;
                 
-                case OP_LCOPY: {
-                    const t_register_binary& target = state.next();
-                    top_frame.reg_copy_to(target, top_frame.local_stack[state.next()]);
+                case OP_LOC_COPY: {
+                    const t_register_value& target = state.next();
+                    const t_local_id local_index = _call_mergel_16(state);
+                    top_frame.reg_copy_to(target, top_frame.local_stack[local_index]);
                     break;
                 }   
 
                 case OP_CALL: {
-                    const t_chunk_pos goto_position = _call_mergel_32(state);
+                    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(state));
                     const t_register_id return_value_register = state.next();
                     const uint8_t argument_count = state.next();
 
@@ -279,7 +298,7 @@ void execute(run_state& state) {
 
                     state.call_stack.emplace_back(new_stack_frame);
 
-                    state.ip = goto_position;
+                    state.ip += -6 - argument_count + jump_distance;
 
                     break;
                 }
@@ -296,12 +315,17 @@ void execute(run_state& state) {
                     break;
                 }
 
-                case OP_GOTO:
-                    state.ip = _call_mergel_64(state);
+                case OP_JUMP_I8:
+                    state.ip += bit_util::bit_cast<uint8_t, int8_t>(state.next()) - 2;
+                    break;
+
+                case OP_JUMP_I16:
+                    state.ip += bit_util::bit_cast<uint16_t, int16_t>(_call_mergel_16(state)) - 3;
                     break;
 
                 default:
-                    throw std::runtime_error("Responded to invalid opcode: " + std::to_string(instruction));
+                    std::cout << "PANIC - Invalid opcode.\n";
+                    std::exit(1);
             }
         }
 
@@ -310,20 +334,13 @@ void execute(run_state& state) {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-    std::cout << "Execution time (avg): " << diff.count() / 50 << "ns\n";
+    std::cout << "Execution time (avg): " << diff.count() / CHRONO_REPEAT << "ns\n";
 #endif
 
     std::cout << "Execution complete.\n";
 
-#if PRINT_ENTRY_POINT_REGISTERS
-    std::cout << "Modified registers in entry-point stack frame:\n";
-    for (int id = 0; id < state.call_stack.back().register_list.size(); id++) {
-        const t_register_binary register_value = state.call_stack.back().reg_copy_from(id);
-        
-        if (register_value != 0)
-            std::cout << std::to_string(id) << ":\t" << std::bitset<64>(state.call_stack.back().reg_copy_from(id)) << '\n';
-    }
-#endif
+    if (state.call_stack.size() != 0)
+        std::cout << "Note - Not all call stacks were exited before runtime ceased.\n";
 }
 
 // Assumes the chunk is already initialized. Parses the first few instructions and initializes the constant table.
@@ -333,7 +350,7 @@ bool load_constants(run_state& state) {
 
     for (t_literal_id i = 0; i < literal_count; i++) {
         uint8_t literal_size = state.next();
-        t_register_binary binary;
+        t_register_value binary;
 
         switch (literal_size) {
             case 1:
@@ -426,32 +443,56 @@ int main(int argc, char* argv[]) {
     write_8(b, 4);
     write_32(b, bit_util::bit_cast<float, uint32_t>(float(63)));
 
-    // Main
-    write_8(b, OP_COPY);
+    // MAIN
+    write_8(b, OP_CALL); /* 17 */
+    write_32(b, 8); // Jump ahead 8 places to start function.
     write_8(b, 0);
-    write_16(b, 0);
-
-    write_8(b, OP_COPY);
-    write_8(b, 1);
-    write_16(b, 1);
-
-    write_8(b, OP_ADD);
-    write_8(b, VAL_F32);
-    write_8(b, 2);
     write_8(b, 0);
-    write_8(b, 1);
 
-    write_8(b, OP_COPY);
-    write_8(b, 3);
-    write_16(b, 2);
+    // Jump to end of program after function call
+    write_8(b, OP_JUMP_I8);
+    write_8(b, 34);
 
-    write_8(b, OP_ADD);
-    write_8(b, VAL_F32);
-    write_8(b, 4);
-    write_8(b, 2);
-    write_8(b, 3);
+    // FUNCTION
+        write_8(b, OP_COPY);
+        write_8(b, 0);
+        write_16(b, 0);
+
+        write_8(b, OP_COPY);
+        write_8(b, 1);
+        write_16(b, 1);
+
+        write_8(b, OP_ADD);
+        write_8(b, VAL_F32);
+        write_8(b, 2);
+        write_8(b, 0);
+        write_8(b, 1);
+
+        write_8(b, OP_COPY);
+        write_8(b, 3);
+        write_16(b, 2);
+
+        write_8(b, OP_ADD);
+        write_8(b, VAL_F32);
+        write_8(b, 4);
+        write_8(b, 2);
+        write_8(b, 3);
+
+        write_8(b, OP_LOC_PUSH);
+        write_8(b, 4);
+
+        write_8(b, OP_LOC_COPY);
+        write_8(b, 5);
+        write_16(b, 0);  // Access local index 0
+
+        write_8(b, OP_OUT);
+        write_8(b, VAL_F32);
+        write_8(b, 5);
+
+        write_8(b, OP_RETURN);
 
     // Eof
+    write_8(b, OP_RETURN);
     write_8(b, OP_EOF);
 
     std::ofstream write_file("test.lch", std::ios::binary); // .lican-chunk
