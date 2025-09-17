@@ -54,14 +54,19 @@ enum opcode {
     // Load a constant into a register.
     OP_COPY,               // REG: 8, LITERAL_ID: 16 -> REG = LITERAL == ARRAY ? &LITERAL_COPY : LITERAL_COPY
 
-    // Add the value of two integer registers and store them in the third.
-    OP_ADD,                // ADD_TYPE: 8, SUM_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_ADD,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_SUB,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_MUL,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_DIV,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_MORE,               // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_LESS,               // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
+    OP_B_EQUAL,              // TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
 
     // Push the contents of the given register into the stack.
-    OP_LOC_PUSH,           // SOURCE_REG: 8 
+    OP_PUSH_LOCAL,           // SOURCE_REG: 8 
 
     // Copy a value from the local stack.
-    OP_LOC_COPY,           // REG: 8, LOCAL_INDEX: T_LOCAL_ID_MAX
+    OP_COPY_LOCAL,           // REG: 8, LOCAL_INDEX: T_LOCAL_ID_MAX
 
     // Push a new value to the stack frame.
     // Note: IP_OFFSET is based on the instruction location, not the ending arg byte of the instruction.
@@ -75,16 +80,16 @@ enum opcode {
     OP_JUMP_I8,            // IP_OFFSET: i8
     OP_JUMP_I16,           // IP_OFFSET: i16
 
-    JUMP_IF_FALSE,         // IP_OFFSET: i16
+    OP_JUMP_IF_FALSE,      // IP_OFFSET: i16, SOURCE_REG: 8
 
-    OP_CMP_MORE,           // TARGET_REG: 8, REG0: 8, REG1: 8
-    OP_CMP_LESS,           // TARGET_REG: 8, REG0: 8, REG1: 8
-    OP_CMP_EQUAL,          // TARGET_REG: 8, REG0: 8, REG1: 8
-    OP_FLIP,               // TARGET_REG: 8, SOURCE_REG: 8
+    OP_U_NOT,             // TARGET_REG: 8, SOURCE_REG: 8
+    OP_U_NEG,              // TARGET_REG: 8, SOURCE_REG: 8
 };
 
 // Used for some opcode arguments.
 enum value_type : uint8_t {
+    VAL_NIL,
+    VAL_BOOL,
     VAL_U8,
     VAL_U16,
     VAL_U32,
@@ -98,15 +103,15 @@ enum value_type : uint8_t {
 };
 
 struct call_stack_frame {
-    call_stack_frame(const t_chunk_pos return_address, const t_chunk_pos return_value_register)
-        : return_address(return_address), return_value_register(return_value_register) {}
+    call_stack_frame(const t_chunk_pos return_address, const t_chunk_pos return_value_reg)
+        : return_address(return_address), return_value_reg(return_value_reg) {}
 
     t_register_list register_list;
 
     std::vector<t_register_value> local_stack;
     
     const t_chunk_pos return_address;
-    const t_register_id return_value_register;
+    const t_register_id return_value_reg;
 
     inline void reg_copy_to(const t_register_id reg, const t_register_value& binary) {
         register_list[reg] = binary;
@@ -188,16 +193,45 @@ static inline uint64_t _call_mergel_64(run_state& state) {
     return bit_util::mergel_64(b0, b1, b2, b3, b4, b5, b6, b7);
 }
 
-void instr_eof(run_state& state);
-void instr_out(run_state& state);
-void instr_copy(run_state& state);
-void instr_add(run_state& state);
-void instr_loc_push(run_state& state);
-void instr_loc_copy(run_state& state);
-void instr_call(run_state& state);
-void instr_return(run_state& state);
-void instr_jump_i8(run_state& state);
-void instr_jump_i16(run_state& state);
+void instr_eof(run_state& state, call_stack_frame& top_frame);
+void instr_out(run_state& state, call_stack_frame& top_frame);
+void instr_copy(run_state& state, call_stack_frame& top_frame);
+void instr_binary_add(run_state& state, call_stack_frame& top_frame);
+void instr_binary_sub(run_state& state, call_stack_frame& top_frame);
+void instr_binary_mul(run_state& state, call_stack_frame& top_frame);
+void instr_binary_div(run_state& state, call_stack_frame& top_frame);
+void instr_binary_more(run_state& state, call_stack_frame& top_frame);
+void instr_binary_less(run_state& state, call_stack_frame& top_frame);
+void instr_binary_equal(run_state& state, call_stack_frame& top_frame);
+void instr_loc_push(run_state& state, call_stack_frame& top_frame);
+void instr_loc_copy(run_state& state, call_stack_frame& top_frame);
+void instr_call(run_state& state, call_stack_frame& top_frame);
+void instr_return(run_state& state, call_stack_frame& top_frame);
+void instr_jump_i8(run_state& state, call_stack_frame& top_frame);
+void instr_jump_i16(run_state& state, call_stack_frame& top_frame);
+void instr_jump_if_false(run_state& state, call_stack_frame& top_frame);
+void instr_unary_not(run_state& state, call_stack_frame& top_frame);
+void instr_unary_neg(run_state& state, call_stack_frame& top_frame);
 
 // Functions must carry the same order as their enum equiv
-void (*const instruction_jump_table[])(run_state&) = { instr_eof, instr_out, instr_copy, instr_add, instr_loc_push, instr_loc_copy, instr_call, instr_return, instr_jump_i8, instr_jump_i16 };
+void (*const instruction_jump_table[])(run_state&, call_stack_frame&) = { 
+    instr_eof, 
+    instr_out, 
+    instr_copy, 
+    instr_binary_add, 
+    instr_binary_sub, 
+    instr_binary_mul, 
+    instr_binary_div,
+    instr_binary_more,
+    instr_binary_less,
+    instr_binary_equal, 
+    instr_loc_push, 
+    instr_loc_copy, 
+    instr_call, 
+    instr_return, 
+    instr_jump_i8, 
+    instr_jump_i16,
+    instr_jump_if_false,
+    instr_unary_not,
+    instr_unary_neg,
+};

@@ -2,12 +2,12 @@
 
 constexpr bool WRITE_MODE = true;
 
-constexpr bool CHRONO_MODE = true;
-constexpr uint64_t CHRONO_REPEAT = 100000000;
+constexpr bool CHRONO_MODE = false;
+constexpr uint64_t CHRONO_REPEAT = 3;
 
 inline void _run_instructions(run_state& state) {
     while (!state.at_eof() && state.call_stack.size() > 0) {
-        instruction_jump_table[state.next()](state);
+        instruction_jump_table[state.next()](state, state.top_frame());
     }
 }
 
@@ -34,7 +34,7 @@ void execute(run_state& state) {
     std::cout << "Execution complete.\n";
 
     if (state.call_stack.size() != 0)
-        std::cout << "Note - Not all call stacks were exited before runtime ceased.\n";
+        std::cout << "Note - Not all call frames were exited before runtime ceased.\n";
 }
 
 // Assumes the chunk is already initialized. Parses the first few instructions and initializes the constant table.
@@ -135,31 +135,26 @@ int main(int argc, char* argv[]) {
     using namespace str_util;
 
     // Literal count
-    write_16(b, 2);
+    write_16(b, 1);
 
-    write_8(b, 4);
-    write_32(b, bit_util::bit_cast<float, uint32_t>(float(-52)));
-
-    write_8(b, 4);
-    write_32(b, bit_util::bit_cast<float, uint32_t>(float(24)));
+    write_8(b, 1);
+    write_8(b, false);
 
     write_8(b, OP_COPY);
     write_8(b, 0);
     write_16(b, 0);
 
-    write_8(b, OP_COPY);
+    write_8(b, OP_U_NOT);
     write_8(b, 1);
-    write_16(b, 1);
-
-    write_8(b, OP_ADD);
-    write_8(b, VAL_F32);
-    write_8(b, 2);
     write_8(b, 0);
-    write_8(b, 1);
 
-    // write_8(b, OP_OUT);
-    // write_8(b, VAL_F32);
-    // write_8(b, 2);
+    write_8(b, OP_OUT);
+    write_8(b, VAL_BOOL);
+    write_8(b, 0);
+
+    write_8(b, OP_OUT);
+    write_8(b, VAL_BOOL);
+    write_8(b, 1);
 
     write_8(b, OP_RETURN);
     write_8(b, OP_EOF);
