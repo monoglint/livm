@@ -1,8 +1,16 @@
+#include <utility>
 #include "common.hpp"
 
-template <typename T>
-static t_register_value _binary_add(const t_register_value operand0, const t_register_value operand1) {
-    return bit_util::bit_cast<T, t_register_value>(bit_util::bit_cast<t_register_value, T>(operand0) + bit_util::bit_cast<t_register_value, T>(operand1));
+inline constexpr auto _binary_add = [](auto a, auto b) { return a + b; };
+inline constexpr auto _binary_sub = [](auto a, auto b) { return a - b; };
+inline constexpr auto _binary_mul = [](auto a, auto b) { return a * b; };
+inline constexpr auto _binary_div = [](auto a, auto b) { return a / b; };
+inline constexpr auto _binary_equal_to = [](auto a, auto b) { return a == b; };
+inline constexpr auto _binary_more_than = [](auto a, auto b) { return a > b; };
+
+template <typename T, typename OP>
+static inline t_register_value _binary_op(const t_register_value operand0, const t_register_value operand1, OP op) {
+    return bit_util::bit_cast<T, t_register_value>(op(bit_util::bit_cast<t_register_value, T>(operand0), bit_util::bit_cast<t_register_value, T>(operand1))); 
 }
 
 void instr_eof(run_state& state) {
@@ -46,16 +54,16 @@ void instr_add(run_state& state) {
     uint64_t result;
 
     switch (type) {
-        case VAL_U8:  result = _binary_add<uint8_t>(operand0, operand1); break;
-        case VAL_U16: result = _binary_add<uint16_t>(operand0, operand1); break;
-        case VAL_U32: result = _binary_add<uint32_t>(operand0, operand1); break;
-        case VAL_U64: result = _binary_add<uint64_t>(operand0, operand1); break;
-        case VAL_I8:  result = _binary_add<int8_t>(operand0, operand1); break;
-        case VAL_I16: result = _binary_add<int16_t>(operand0, operand1); break;
-        case VAL_I32: result = _binary_add<int32_t>(operand0, operand1); break;
-        case VAL_I64: result = _binary_add<int64_t>(operand0, operand1); break;
-        case VAL_F32: result = _binary_add<float>(operand0, operand1); break;
-        case VAL_F64: result = _binary_add<double>(operand0, operand1); break;
+        case VAL_U8:  result = _binary_op<uint8_t>(operand0, operand1, _binary_add); break;
+        case VAL_U16: result = _binary_op<uint16_t>(operand0, operand1, _binary_add); break;
+        case VAL_U32: result = _binary_op<uint32_t>(operand0, operand1, _binary_add); break;
+        case VAL_U64: result = _binary_op<uint64_t>(operand0, operand1, _binary_add); break;
+        case VAL_I8:  result = _binary_op<int8_t>(operand0, operand1, _binary_add); break;
+        case VAL_I16: result = _binary_op<int16_t>(operand0, operand1, _binary_add); break;
+        case VAL_I32: result = _binary_op<int32_t>(operand0, operand1, _binary_add); break;
+        case VAL_I64: result = _binary_op<int64_t>(operand0, operand1, _binary_add); break;
+        case VAL_F32: result = _binary_op<float>(operand0, operand1, _binary_add); break;
+        case VAL_F64: result = _binary_op<double>(operand0, operand1, _binary_add); break;
     }
 
     state.top_frame().reg_emplace_to(reg_target, result);

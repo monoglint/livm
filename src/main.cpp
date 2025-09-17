@@ -2,8 +2,8 @@
 
 constexpr bool WRITE_MODE = true;
 
-constexpr bool CHRONO_MODE = false;
-constexpr uint64_t CHRONO_REPEAT = 500;
+constexpr bool CHRONO_MODE = true;
+constexpr uint64_t CHRONO_REPEAT = 100000000;
 
 inline void _run_instructions(run_state& state) {
     while (!state.at_eof() && state.call_stack.size() > 0) {
@@ -157,9 +157,9 @@ int main(int argc, char* argv[]) {
     write_8(b, 0);
     write_8(b, 1);
 
-    write_8(b, OP_OUT);
-    write_8(b, VAL_F32);
-    write_8(b, 2);
+    // write_8(b, OP_OUT);
+    // write_8(b, VAL_F32);
+    // write_8(b, 2);
 
     write_8(b, OP_RETURN);
     write_8(b, OP_EOF);

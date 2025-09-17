@@ -74,6 +74,13 @@ enum opcode {
 
     OP_JUMP_I8,            // IP_OFFSET: i8
     OP_JUMP_I16,           // IP_OFFSET: i16
+
+    JUMP_IF_FALSE,         // IP_OFFSET: i16
+
+    OP_CMP_MORE,           // TARGET_REG: 8, REG0: 8, REG1: 8
+    OP_CMP_LESS,           // TARGET_REG: 8, REG0: 8, REG1: 8
+    OP_CMP_EQUAL,          // TARGET_REG: 8, REG0: 8, REG1: 8
+    OP_FLIP,               // TARGET_REG: 8, SOURCE_REG: 8
 };
 
 // Used for some opcode arguments.
