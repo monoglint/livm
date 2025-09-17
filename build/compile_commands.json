@@ -1,0 +1,8 @@
+[
+{
+  "directory": "C:/Users/jghig/cxxprojects/livm/build",
+  "command": "C:\\msys64\\ucrt64\\bin\\c++.exe  @CMakeFiles/livm.dir/includes_CXX.rsp -std=c++17 -o CMakeFiles\\livm.dir\\src\\main.cpp.obj -c C:\\Users\\jghig\\cxxprojects\\livm\\src\\main.cpp",
+  "file": "C:/Users/jghig/cxxprojects/livm/src/main.cpp",
+  "output": "CMakeFiles/livm.dir/src/main.cpp.obj"
+}
+]

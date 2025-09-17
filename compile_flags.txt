@@ -1,0 +1,5 @@
+-std=c++17
+--gcc-toolchain=C:\msys64\mingw64
+-IC:\msys64\mingw64\include\c++
+-IC:\msys64\mingw64\include\c++\x86_64-w64-mingw32
+-IC:\msys64\mingw64\include

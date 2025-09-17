@@ -9,6 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(livm
     src/main.cpp
+    src/instructions.cpp
     resources/resources.rc
 )
 
