@@ -18,13 +18,13 @@ static inline t_register_value _unary_op(const t_register_value operand0, OP op)
     return bit_util::bit_cast<T, t_register_value>(op(bit_util::bit_cast<t_register_value, T>(operand0))); 
 }
 
-void instr_eof(run_state& state, call_stack_frame& top_frame) {
+void instr_eof(run_state& state, run_thread& thread, call_frame& top_frame) {
 
 }
 
-void instr_out(run_state& state, call_stack_frame& top_frame) {
-    const value_type type = static_cast<value_type>(state.next());
-    const t_register_id target_reg = state.next();
+void instr_out(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const value_type type = static_cast<value_type>(thread.next());
+    const t_register_id target_reg = thread.next();
 
     const t_register_value source_reg_value = top_frame.reg_copy_from(target_reg);
     std::string buffer;
@@ -49,19 +49,19 @@ void instr_out(run_state& state, call_stack_frame& top_frame) {
     std::cout << "RUNTIME VALUE: " << buffer << '\n';
 }
 
-void instr_copy(run_state& state, call_stack_frame& top_frame) {
-    const t_register_id target_reg = state.next();
-    const t_literal_id literal_to_copy = _call_mergel_16(state);
+void instr_copy(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id target_reg = thread.next();
+    const t_literal_id literal_to_copy = _call_mergel_16(thread);
 
     top_frame.reg_copy_to(target_reg, state.lit_copy_from(literal_to_copy));
 }
 
 template <typename FUNC>
-inline void typed_binary_instr(run_state& state, call_stack_frame& top_frame, FUNC func) {
-    const value_type type = static_cast<value_type>(state.next());
-    const t_register_id target_reg = state.next();
-    const t_register_value& operand0 = top_frame.reg_copy_from(state.next());
-    const t_register_value& operand1 = top_frame.reg_copy_from(state.next());
+inline void typed_binary_instr(run_thread& thread, call_frame& top_frame, FUNC func) {
+    const value_type type = static_cast<value_type>(thread.next());
+    const t_register_id target_reg = thread.next();
+    const t_register_value& operand0 = top_frame.reg_copy_from(thread.next());
+    const t_register_value& operand1 = top_frame.reg_copy_from(thread.next());
 
     uint64_t result;
 
@@ -78,102 +78,102 @@ inline void typed_binary_instr(run_state& state, call_stack_frame& top_frame, FU
         case VAL_F64: result = _binary_op<double>(operand0, operand1, func); break;
     }
 
-    top_frame.reg_emplace_to(target_reg, result);
+    top_frame.reg_copy_to(target_reg, result);
 }
 
-void instr_binary_add(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_add);
+void instr_binary_add(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_add);
 }
 
-void instr_binary_sub(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_sub);
+void instr_binary_sub(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_sub);
 }
 
-void instr_binary_mul(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_mul);
+void instr_binary_mul(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_mul);
 }
 
-void instr_binary_div(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_div);
+void instr_binary_div(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_div);
 }
 
-void instr_binary_more(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_more);
+void instr_binary_more(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_more);
 }
 
-void instr_binary_less(run_state& state, call_stack_frame& top_frame) {
-    typed_binary_instr(state, top_frame, _typed_binary_less);
+void instr_binary_less(run_state& state, run_thread& thread, call_frame& top_frame) {
+    typed_binary_instr(thread, top_frame, _typed_binary_less);
 }
 
-void instr_binary_equal(run_state& state, call_stack_frame& top_frame) {
-    const t_register_id target_reg = state.next();
-    const t_register_value operand0 = top_frame.reg_copy_from(state.next());
-    const t_register_value operand1 = top_frame.reg_copy_from(state.next());
+void instr_binary_equal(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id target_reg = thread.next();
+    const t_register_value operand0 = top_frame.reg_copy_from(thread.next());
+    const t_register_value operand1 = top_frame.reg_copy_from(thread.next());
 
     top_frame.reg_copy_to(target_reg, operand0 == operand1 ? 1ULL : 0ULL);
 }
 
-void instr_loc_push(run_state& state, call_stack_frame& top_frame) {
-    top_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
+void instr_loc_push(run_state& state, run_thread& thread, call_frame& top_frame) {
+    top_frame.local_stack.emplace_back(top_frame.reg_copy_from(thread.next()));
 }
 
-void instr_loc_copy(run_state& state, call_stack_frame& top_frame) {
-    const t_register_value& target_reg = state.next();
-    const t_local_id local_index = _call_mergel_16(state);
+void instr_loc_copy(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_value& target_reg = thread.next();
+    const t_local_id local_index = _call_mergel_16(thread);
     top_frame.reg_copy_to(target_reg, top_frame.local_stack[local_index]);
 }
 
-void instr_call(run_state& state, call_stack_frame& top_frame) {
-    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(state));
-    const t_register_id return_value_reg = state.next();
-    const uint8_t argument_count = state.next();
+void instr_call(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(thread));
+    const t_register_id return_value_reg = thread.next();
+    const uint8_t argument_count = thread.next();
 
-    call_stack_frame new_stack_frame(state.ip + argument_count, return_value_reg);
+    auto new_stack_frame = call_frame(thread.ip + argument_count, return_value_reg);
 
     for (int i = 0; i < argument_count; i++) {
-        new_stack_frame.local_stack.emplace_back(top_frame.reg_copy_from(state.next()));
+        new_stack_frame.local_stack.emplace_back(top_frame.reg_copy_from(thread.next()));
     }
 
-    state.call_stack.emplace_back(new_stack_frame);
+    thread.emplace_call_frame(new_stack_frame);
 
     // (-6 - argument_count) accounts for ensuring that the jump is relative to the instruction opcode and not any of its arguments.
-    state.ip += -6 - argument_count + jump_distance;
+    thread.ip += -6 - argument_count + jump_distance;
 }
 
-void instr_return(run_state& state, call_stack_frame& top_frame) {
+void instr_return(run_state& state, run_thread& thread, call_frame& top_frame) {
     // Write return value.
     if (top_frame.return_value_reg > 0) {
-        state.call_stack[state.call_stack.size() - 2].reg_emplace_to(top_frame.return_value_reg - 1, top_frame.reg_copy_from(state.next()));
+        thread.get_call_stack_index_by_deepness(1).reg_copy_to(top_frame.return_value_reg - 1, top_frame.reg_copy_from(thread.next()));
     }  
 
-    state.ip = top_frame.return_address;
-    state.call_stack.pop_back();
+    thread.ip = top_frame.return_address;
+    thread.pop_call_frame();
 }
 
-void instr_jump_i8(run_state& state, call_stack_frame& top_frame) {
-    state.ip += bit_util::bit_cast<uint8_t, int8_t>(state.next()) - 2;
+void instr_jump_i8(run_state& state, run_thread& thread, call_frame& top_frame) {
+    thread.ip += bit_util::bit_cast<uint8_t, int8_t>(thread.next()) - 2;
 }
 
-void instr_jump_i16(run_state& state, call_stack_frame& top_frame) {
-    state.ip += bit_util::bit_cast<uint16_t, int16_t>(_call_mergel_16(state)) - 3;
+void instr_jump_i16(run_state& state, run_thread& thread, call_frame& top_frame) {
+    thread.ip += bit_util::bit_cast<uint16_t, int16_t>(_call_mergel_16(thread)) - 3;
 }
 
-void instr_jump_if_false(run_state& state, call_stack_frame& top_frame) {
+void instr_jump_if_false(run_state& state, run_thread& thread, call_frame& top_frame) {
 
 }
 
-void instr_unary_not(run_state& state, call_stack_frame& top_frame) {
-    const t_register_id target_reg = state.next();
-    const t_register_id source_reg = state.next();
+void instr_unary_not(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id target_reg = thread.next();
+    const t_register_id source_reg = thread.next();
 
     const t_register_value write_data = top_frame.reg_copy_from(source_reg) ^ 1ULL;
 
     top_frame.reg_copy_to(target_reg, write_data);
 }
 
-void instr_unary_neg(run_state& state, call_stack_frame& top_frame) {
-    const t_register_id target_reg = state.next();
-    const t_register_id source_reg = state.next();
+void instr_unary_neg(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id target_reg = thread.next();
+    const t_register_id source_reg = thread.next();
 
     const t_register_value write_data = top_frame.reg_copy_from(source_reg) ^ (1ULL << 63);
 

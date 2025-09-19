@@ -5,59 +5,36 @@ constexpr bool WRITE_MODE = true;
 constexpr bool CHRONO_MODE = false;
 constexpr uint64_t CHRONO_REPEAT = 3;
 
-inline void _run_instructions(run_state& state) {
-    while (!state.at_eof() && state.call_stack.size() > 0) {
-        instruction_jump_table[state.next()](state, state.top_frame());
-    }
-}
-
 // Takes in a fully initialized state and runs bytecode.
 void execute(run_state& state) {
-    state.call_stack.emplace_back(call_stack_frame(0, 0));
-
-    if constexpr (CHRONO_MODE) {
-        auto start = std::chrono::high_resolution_clock::now();
-        t_chunk_pos ip_marker = state.ip;
-        for (int _ = 0; _ < CHRONO_REPEAT; _++) {
-            state.ip = ip_marker;
-            _run_instructions(state);
-        }
-
-        auto end = std::chrono::high_resolution_clock::now();
-        auto diff = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-        std::cout << "Execution time (avg): " << diff.count() / CHRONO_REPEAT << "ns\n";
-    }
-    else {
-        _run_instructions(state);
-    }
+    // Execute thread 0
+    execute_thread(state, 0);
 
     std::cout << "Execution complete.\n";
-
-    if (state.call_stack.size() != 0)
-        std::cout << "Note - Not all call frames were exited before runtime ceased.\n";
 }
 
 // Assumes the chunk is already initialized. Parses the first few instructions and initializes the constant table.
 // At this point, error checks are no more. Assume the compiler wrote everything correctly
 bool load_constants(run_state& state) {
-    t_literal_id literal_count = _call_mergel_16(state);
+    run_thread& main_thread = state.thread_list[0];
+    t_literal_id literal_count = _call_mergel_16(main_thread);
 
     for (t_literal_id i = 0; i < literal_count; i++) {
-        uint8_t literal_size = state.next();
+        uint8_t literal_size = main_thread.next();
         t_register_value binary;
 
         switch (literal_size) {
             case 1:
-                binary = state.next();
+                binary = main_thread.next();
                 break;
             case 2:
-                binary = _call_mergel_16(state);
+                binary = _call_mergel_16(main_thread);
                 break;
             case 4:
-                binary = _call_mergel_32(state);
+                binary = _call_mergel_32(main_thread);
                 break;
             case 8:
-                binary = _call_mergel_64(state);
+                binary = _call_mergel_64(main_thread);
                 break;
             default:
                 binary = 0;
@@ -68,6 +45,11 @@ bool load_constants(run_state& state) {
     }
 
     return true;
+}
+
+void init_state(run_state& state) {
+    // Initialize main thread
+    state.new_thread(0);
 }
 
 bool open_file(run_state& state, const std::string& path) {
@@ -107,6 +89,8 @@ bool run(const std::string& path) {
         return false;
 
     // <-IP-> +++++++->CONSTANTS<-++++++++++++++->BC<-+++++++
+
+    init_state(state);
 
     if (!load_constants(state))
         return false;
