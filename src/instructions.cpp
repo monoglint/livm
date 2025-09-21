@@ -18,10 +18,6 @@ static inline t_register_value _unary_op(const t_register_value operand0, OP op)
     return bit_util::bit_cast<T, t_register_value>(op(bit_util::bit_cast<t_register_value, T>(operand0))); 
 }
 
-void instr_eof(run_state& state, run_thread& thread, call_frame& top_frame) {
-
-}
-
 void instr_out(run_state& state, run_thread& thread, call_frame& top_frame) {
     const value_type type = static_cast<value_type>(thread.next());
     const t_register_id target_reg = thread.next();
@@ -46,12 +42,12 @@ void instr_out(run_state& state, run_thread& thread, call_frame& top_frame) {
 
     buffer += " (" + std::bitset<64>(source_reg_value).to_string() + ")";
     
-    std::cout << "RUNTIME VALUE: " << buffer << '\n';
+    thread_safe_print(buffer + '\n');
 }
 
 void instr_copy(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id target_reg = thread.next();
-    const t_literal_id literal_to_copy = _call_mergel_16(thread);
+    const t_literal_id literal_to_copy = _call_mergel_16(thread.chunk, thread.ip);
 
     top_frame.reg_copy_to(target_reg, state.lit_copy_from(literal_to_copy));
 }
@@ -113,18 +109,50 @@ void instr_binary_equal(run_state& state, run_thread& thread, call_frame& top_fr
     top_frame.reg_copy_to(target_reg, operand0 == operand1 ? 1ULL : 0ULL);
 }
 
+void instr_malloc(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id target_reg = thread.next();
+    const uint8_t size = thread.next();
+
+    top_frame.reg_copy_to(target_reg, state.malloc(size));
+}
+
+void instr_mfree(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id pointer_reg = thread.next();
+    const uint8_t size = thread.next();
+
+    state.mfree(top_frame.reg_copy_from(pointer_reg), size);
+}
+
+void instr_mwrite(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id pointer_reg = thread.next();
+    const t_register_id source_reg = thread.next();
+    const uint8_t size = thread.next();
+
+    state.mwrite(top_frame.reg_copy_from(pointer_reg), top_frame.reg_copy_from(source_reg), size);
+}
+
+void instr_mread(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id pointer_reg = thread.next();
+    const t_register_id target_reg = thread.next();
+    const uint8_t size = thread.next();
+
+    const t_register_value heap_value = state.mread(top_frame.reg_copy_from(pointer_reg), size);
+    top_frame.reg_copy_to(target_reg, heap_value);
+}
+
 void instr_loc_push(run_state& state, run_thread& thread, call_frame& top_frame) {
     top_frame.local_stack.emplace_back(top_frame.reg_copy_from(thread.next()));
 }
 
 void instr_loc_copy(run_state& state, run_thread& thread, call_frame& top_frame) {
-    const t_register_value& target_reg = thread.next();
-    const t_local_id local_index = _call_mergel_16(thread);
+    const t_register_id target_reg = thread.next();
+    const t_local_id local_index = _call_mergel_16(thread.chunk, thread.ip);
     top_frame.reg_copy_to(target_reg, top_frame.local_stack[local_index]);
 }
 
 void instr_call(run_state& state, run_thread& thread, call_frame& top_frame) {
-    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(thread));
+    const t_chunk_pos instruction_location = thread.ip - 1;
+    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(thread.chunk, thread.ip));
     const t_register_id return_value_reg = thread.next();
     const uint8_t argument_count = thread.next();
 
@@ -134,20 +162,34 @@ void instr_call(run_state& state, run_thread& thread, call_frame& top_frame) {
         new_stack_frame.local_stack.emplace_back(top_frame.reg_copy_from(thread.next()));
     }
 
-    thread.emplace_call_frame(new_stack_frame);
+    thread._call_stack.emplace_back(new_stack_frame);
 
-    // (-6 - argument_count) accounts for ensuring that the jump is relative to the instruction opcode and not any of its arguments.
-    thread.ip += -6 - argument_count + jump_distance;
+    thread.ip += instruction_location + jump_distance;
+}
+
+void instr_desync(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_chunk_pos instruction_location = thread.ip - 1;
+    const int32_t jump_distance = bit_util::bit_cast<uint32_t, int32_t>(_call_mergel_32(thread.chunk, thread.ip));
+    const uint8_t argument_count = thread.next();
+
+    run_thread& new_thread = state.spawn_thread(instruction_location + jump_distance);
+
+    for (int i = 0; i < argument_count; i++) {
+        new_thread.top_frame().local_stack.emplace_back(top_frame.reg_copy_from(thread.next()));
+    }
+    
+    std::thread detached_thread(execute_thread, std::ref(state), std::ref(new_thread));
+    detached_thread.detach();
 }
 
 void instr_return(run_state& state, run_thread& thread, call_frame& top_frame) {
     // Write return value.
     if (top_frame.return_value_reg > 0) {
-        thread.get_call_stack_index_by_deepness(1).reg_copy_to(top_frame.return_value_reg - 1, top_frame.reg_copy_from(thread.next()));
+        thread._call_stack[thread._call_stack.size() - 2].reg_copy_to(top_frame.return_value_reg - 1, top_frame.reg_copy_from(thread.next()));
     }  
 
     thread.ip = top_frame.return_address;
-    thread.pop_call_frame();
+    thread._call_stack.pop_back();
 }
 
 void instr_jump_i8(run_state& state, run_thread& thread, call_frame& top_frame) {
@@ -155,11 +197,15 @@ void instr_jump_i8(run_state& state, run_thread& thread, call_frame& top_frame) 
 }
 
 void instr_jump_i16(run_state& state, run_thread& thread, call_frame& top_frame) {
-    thread.ip += bit_util::bit_cast<uint16_t, int16_t>(_call_mergel_16(thread)) - 3;
+    thread.ip += bit_util::bit_cast<uint16_t, int16_t>(_call_mergel_16(thread.chunk, thread.ip)) - 3;
 }
 
 void instr_jump_if_false(run_state& state, run_thread& thread, call_frame& top_frame) {
+    const t_register_id source_reg = thread.next();
+    const t_register_id jump_length = _call_mergel_16(thread.chunk, thread.ip);
 
+    if (top_frame.reg_copy_from(source_reg) == 0ULL)
+        thread.ip += bit_util::bit_cast<uint16_t, int16_t>(jump_length);
 }
 
 void instr_unary_not(run_state& state, run_thread& thread, call_frame& top_frame) {

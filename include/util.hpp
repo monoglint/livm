@@ -4,6 +4,11 @@
 #include <utility>
 #include <string>
 
+template <typename T>
+inline void do_not_optimize_away(T&& value) {
+    asm volatile("" :: "r,m"(value) : "memory");
+}
+
 namespace bit_util {
     inline uint16_t mergel_16(uint8_t b0, uint8_t b1) {
         return (static_cast<uint16_t>(b1) << 8) | b0;
@@ -51,6 +56,7 @@ namespace bit_util {
     }
 
     template <typename FROM, typename CAST_TO>
+    // Unsafe function - sizes of both types are not checked.
     inline CAST_TO bit_cast(FROM from) {
         CAST_TO to;
         memcpy(&to, &from, std::min(sizeof(from), sizeof(to)));
