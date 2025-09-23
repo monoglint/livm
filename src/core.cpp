@@ -1,6 +1,7 @@
 #include <chrono>
 
-#include "common.hpp"
+#include "core.hpp"
+#include "instructions.hpp"
 
 constexpr bool CHRONO_MODE = false;
 constexpr uint64_t CHRONO_REPEAT = 50;
@@ -98,6 +99,26 @@ t_register_value run_state::mread(const t_heap_address address, const uint8_t si
     
     for (uint8_t i = 0; i < size; i++) {
         value |= bit_util::bit_cast<uint8_t, t_register_value>(_heap[address + i]) << (i * 8);
+    }
+
+    return value;
+}
+
+void run_state::swrite(const t_static_address address, const t_register_value value, const uint8_t bytes) {
+    std::lock_guard<std::mutex> lock(_static_memory_mutex);
+
+    for (uint8_t i = 0; i < bytes; i++) {
+        _static_memory[address + i] = bit_util::bit_cast<t_register_value, uint8_t>((value >> (i * 8)) & 0XFF);
+    }
+}
+
+t_register_value run_state::sread(const t_static_address address, const uint8_t size) {
+    std::lock_guard<std::mutex> lock(_static_memory_mutex);
+
+    t_register_value value = 0;
+    
+    for (uint8_t i = 0; i < size; i++) {
+        value |= bit_util::bit_cast<uint8_t, t_register_value>(_static_memory[address + i]) << (i * 8);
     }
 
     return value;

@@ -1,5 +1,6 @@
 #include <utility>
-#include "common.hpp"
+
+#include "instructions.hpp"
 
 inline constexpr auto _typed_binary_add = [](auto a, auto b) { return a + b; };
 inline constexpr auto _typed_binary_sub = [](auto a, auto b) { return a - b; };
@@ -45,11 +46,11 @@ void instr_out(run_state& state, run_thread& thread, call_frame& top_frame) {
     thread_safe_print(buffer + '\n');
 }
 
-void instr_copy(run_state& state, run_thread& thread, call_frame& top_frame) {
+void instr_load(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id target_reg = thread.next();
-    const t_literal_id literal_to_copy = _call_mergel_16(thread.chunk, thread.ip);
+    const t_literal_id literal_to_load = _call_mergel_16(thread.chunk, thread.ip);
 
-    top_frame.reg_copy_to(target_reg, state.lit_copy_from(literal_to_copy));
+    top_frame.reg_copy_to(target_reg, state.lit_copy_from(literal_to_load));
 }
 
 template <typename FUNC>
@@ -111,32 +112,32 @@ void instr_binary_equal(run_state& state, run_thread& thread, call_frame& top_fr
 
 void instr_malloc(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id target_reg = thread.next();
-    const uint8_t size = thread.next();
+    const t_register_id size_reg = thread.next();
 
-    top_frame.reg_copy_to(target_reg, state.malloc(size));
+    top_frame.reg_copy_to(target_reg, state.malloc(top_frame.reg_copy_from(size_reg)));
 }
 
 void instr_mfree(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id pointer_reg = thread.next();
-    const uint8_t size = thread.next();
+    const t_register_id size_reg = thread.next();
 
-    state.mfree(top_frame.reg_copy_from(pointer_reg), size);
+    state.mfree(top_frame.reg_copy_from(pointer_reg), top_frame.reg_copy_from(size_reg));
 }
 
 void instr_mwrite(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id pointer_reg = thread.next();
     const t_register_id source_reg = thread.next();
-    const uint8_t size = thread.next();
+    const t_register_id size_reg = thread.next();
 
-    state.mwrite(top_frame.reg_copy_from(pointer_reg), top_frame.reg_copy_from(source_reg), size);
+    state.mwrite(top_frame.reg_copy_from(pointer_reg), top_frame.reg_copy_from(source_reg), top_frame.reg_copy_from(size_reg));
 }
 
 void instr_mread(run_state& state, run_thread& thread, call_frame& top_frame) {
     const t_register_id pointer_reg = thread.next();
     const t_register_id target_reg = thread.next();
-    const uint8_t size = thread.next();
+    const t_register_id size_reg = thread.next();
 
-    const t_register_value heap_value = state.mread(top_frame.reg_copy_from(pointer_reg), size);
+    const t_register_value heap_value = state.mread(top_frame.reg_copy_from(pointer_reg), top_frame.reg_copy_from(size_reg));
     top_frame.reg_copy_to(target_reg, heap_value);
 }
 

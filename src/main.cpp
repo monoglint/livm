@@ -1,7 +1,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "common.hpp"
+#include "instructions.hpp"
 
 constexpr bool WRITE_MODE = true;
 
@@ -87,6 +87,9 @@ bool run(const std::string& path) {
     if (!open_file(init, path))
         return false;
 
+    // Load static memory
+    init.static_memory_size = _call_mergel_32(init.chunk, init.ip);
+
     // <-IP-> +++++++->CONSTANTS<-++++++++++++++->BC<-+++++++
 
     if (!load_constants(init))
@@ -124,12 +127,14 @@ int main(int argc, char* argv[]) {
     #define _32(val) write_32(b, val);
     #define _64(val) write_64(b, val);
 
+    _32(0)          // static memory size
+
     _16(2)          // program has 2 literals in constant pool
     _8(4) _32(5)    // first literal: 4 bytes, 32 bit integer (5)
     _8(4) _32(3)    // second literal: same thing, number 3
 
-    _8(OP_COPY) _8(0) _16(0)    // copy literal 0 to reg 0
-    _8(OP_COPY) _8(1) _16(1)    // copy literal 1 to reg 1
+    _8(OP_LOAD) _8(0) _16(0)    // copy literal 0 to reg 0
+    _8(OP_LOAD) _8(1) _16(1)    // copy literal 1 to reg 1
 
     _8(OP_B_ADD) _8(VAL_I32) _8(2) _8(0) _8(1)  // reg2 = reg0 + reg 1
 

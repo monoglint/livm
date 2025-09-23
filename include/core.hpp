@@ -19,7 +19,8 @@ void thread_safe_print(const std::string& string);
 /*
 
 CHUNK
-    t_literal_id_MAX BYTES - Number of literals
+    32 bits - Static memory size
+    16 bits - Number of literals
 
         LITERAL
             1 byte  - Literal Size (bytes)
@@ -61,71 +62,8 @@ using t_local_id = uint16_t;
 using t_heap = std::vector<uint8_t>;
 using t_heap_address = uint32_t;
 
-enum opcode {
-                           // Assume args are unsigned unless explicitly said otherwise.
-                           // ARGS -> SIDE EFFECTS
-
-    OP_OUT,                // VALUE_TYPE: 8, SOURCE_REG: 8
-
-    // Load a constant into a register.
-    OP_COPY,               // REG: 8, LITERAL_ID: 16 -> REG = LITERAL == ARRAY ? &LITERAL_COPY : LITERAL_COPY
-
-    OP_B_ADD,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_SUB,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_MUL,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_DIV,                // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_MORE,               // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_LESS,               // OPR_TYPE: 8, TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-    OP_B_EQUAL,              // TARGET_REG: 8, OP_REG0: 8, OP_REG1: 8
-
-    // really just a fun c reference, could just be alloc
-    OP_MALLOC,               // TARGET_REG (stores location in heap of malloced data): 8, DATA_SIZE: 8
-    OP_MFREE,                // POINTER_REG: 8, DATA_SIZE: 8 
-    OP_MWRITE,               // POINTER_REG: 8, SOURCE_REG: 8, SIZE: 8
-    OP_MREAD,                // POINTER_REG: 8, TARGET_REG: 8, SIZE: 8
-
-    // Push the contents of the given register into the stack.
-    OP_PUSH_LOCAL,           // SOURCE_REG: 8 
-
-    // Copy a value from the local stack.
-    OP_COPY_LOCAL,           // REG: 8, LOCAL_INDEX: T_LOCAL_ID_MAX
-
-    // Push a new value to the stack frame.
-    // Note: IP_OFFSET is based on the instruction location, not the ending arg byte of the instruction.
-    OP_CALL,               // IP_OFFSET: i32, REG_RETURN_LOC: 8, ARG_COUNT: 8, REG_ARG: 8...?
-                           // If REG_RETURN_LOC is 0, then no return value. Otherwise, the return reg is REG_RETURN_LOC - 1
-
-    OP_DESYNC,             // IP_OFFSET: i32, ARG_COUNT: 8, REG_ARG: 8..?
-
-    OP_RETURN,             // REG_RETURN_VAL: 8
-                           // If caller expects no return value, this should just default to zero.
-                           // Otherwise, the - 1 rule is not applied since it is not necessary.
-
-    OP_JUMP_I8,            // IP_OFFSET: i8
-    OP_JUMP_I16,           // IP_OFFSET: i16
-
-    OP_JUMP_IF_FALSE,      // IP_OFFSET: i16, SOURCE_REG: 8
-
-    OP_U_NOT,             // TARGET_REG: 8, SOURCE_REG: 8
-    OP_U_NEG,              // TARGET_REG: 8, SOURCE_REG: 8
-};
-
-// Used for some opcode arguments.
-enum value_type : uint8_t {
-    VAL_NIL,
-    VAL_PTR,
-    VAL_BOOL,
-    VAL_U8,
-    VAL_U16,
-    VAL_U32,
-    VAL_U64,
-    VAL_I8,
-    VAL_I16,
-    VAL_I32,
-    VAL_I64,
-    VAL_F32,
-    VAL_F64,
-};
+using t_static_memory = std::vector<uint8_t>;
+using t_static_address = uint32_t;
 
 struct call_frame {
     call_frame(const t_chunk_pos return_address, const t_chunk_pos return_value_reg)
@@ -222,6 +160,7 @@ using t_thread_id = uint8_t;
 struct run_state_initializer {
     t_chunk chunk;
     t_literal_list literal_list;
+    t_static_address static_memory_size;
 
     t_chunk_pos ip = 0;
 
@@ -238,6 +177,9 @@ struct run_state {
     run_state(run_state_initializer& initializer)
         : chunk(std::move(initializer.chunk)), literal_list(initializer.literal_list) {
             _thread_pool.reserve(THREAD_POOL_MAX);
+
+            // We don't need a mutex. This is called before any thread is detached.
+            _static_memory.reserve(initializer.static_memory_size);
         }
     
     const t_chunk chunk;
@@ -275,6 +217,11 @@ struct run_state {
     // Limit size from 0-7 to fit in t_register value
     t_register_value mread(const t_heap_address address, const uint8_t size);
 
+    // Read and write behaves like heap, but remember, static memory is not dynamic.
+
+    void swrite(const t_static_address address, const t_register_value value, const uint8_t bytes);
+    t_register_value sread(const t_static_address address, const uint8_t size);
+
 private:
     struct _heap_selection {
         _heap_selection(const t_heap_address address, const uint8_t size)
@@ -283,10 +230,14 @@ private:
         t_heap_address address;
         uint8_t size;
 
+        // for hashing
         bool operator<(const _heap_selection& other) const {
             return address < other.address;
         }
     };
+
+    std::vector<uint8_t> _static_memory;
+    std::mutex _static_memory_mutex;
 
     t_heap _heap;
     std::mutex _heap_mutex;
@@ -326,56 +277,3 @@ static inline uint64_t _call_mergel_64(const t_chunk& chunk, t_chunk_pos& ip) {
 
     return bit_util::mergel_64(b0, b1, b2, b3, b4, b5, b6, b7);
 }
-
-void instr_out(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_copy(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_add(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_sub(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_mul(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_div(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_more(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_less(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_binary_equal(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_malloc(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_mfree(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_mwrite(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_mread(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_loc_push(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_loc_copy(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_call(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_desync(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_return(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_jump_i8(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_jump_i16(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_jump_if_false(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_unary_not(run_state& state, run_thread& thread, call_frame& top_frame);
-void instr_unary_neg(run_state& state, run_thread& thread, call_frame& top_frame);
-
-// Functions must carry the same order as their enum equiv
-void (*const instruction_jump_table[])(run_state&, run_thread&, call_frame&) = { 
-    instr_out, 
-    instr_copy, 
-    instr_binary_add, 
-    instr_binary_sub, 
-    instr_binary_mul, 
-    instr_binary_div,
-    instr_binary_more,
-    instr_binary_less,
-    instr_binary_equal, 
-    instr_malloc,
-    instr_mfree,
-    instr_mwrite,
-    instr_mread,
-    instr_loc_push, 
-    instr_loc_copy, 
-    instr_call, 
-    instr_desync,
-    instr_return, 
-    instr_jump_i8, 
-    instr_jump_i16,
-    instr_jump_if_false,
-    instr_unary_not,
-    instr_unary_neg,
-};
-
-void execute_thread(run_state& state, run_thread& thread);
